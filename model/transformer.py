@@ -53,13 +53,13 @@ class Transformer(object):
       train: boolean indicating whether the model is in training mode. Used to
         determine if dropout layers should be added.
     """
-    self.train = train
+    self.train = train # 这个train是啥玩意儿，是函数吗
     self.params = params
 
-    self.embedding_softmax_layer = embedding_layer.EmbeddingSharedWeights(
+    self.embedding_softmax_layer = embedding_layer.EmbeddingSharedWeights( # 不知道干了啥
         params["vocab_size"], params["hidden_size"],
         method="matmul" if params["tpu"] else "gather")
-    self.encoder_stack = EncoderStack(params, train)
+    self.encoder_stack = EncoderStack(params, train) 
     self.decoder_stack = DecoderStack(params, train)
 
   def __call__(self, inputs, targets=None):
@@ -291,16 +291,16 @@ class PrePostProcessingWrapper(object):
 class EncoderStack(tf.layers.Layer):
   """Transformer encoder stack.
 
-  The encoder stack is made up of N identical layers. Each layer is composed
-  of the sublayers:
+  The encoder stack is made up of N identical layers. Each layer is composed # encode由N层组成，每层分两个子层
+  of the sublayers: 
     1. Self-attention layer
     2. Feedforward network (which is 2 fully-connected layers)
   """
 
   def __init__(self, params, train):
-    super(EncoderStack, self).__init__()
+    super(EncoderStack, self).__init__() # 这是干啥
     self.layers = []
-    for _ in range(params["num_hidden_layers"]):
+    for _ in range(params["num_hidden_layers"]): # 循环建立N个独立层
       # Create sublayers for each layer.
       self_attention_layer = attention_layer.SelfAttention(
           params["hidden_size"], params["num_heads"],

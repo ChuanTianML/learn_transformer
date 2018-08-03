@@ -246,9 +246,9 @@ def _validate_file(filepath):
 def run_loop(
     estimator, schedule_manager, train_hooks=None, benchmark_logger=None,
     bleu_source=None, bleu_ref=None, bleu_threshold=None, vocab_file=None):
-  """Train and evaluate model, and optionally compute model's BLEU score.
+  """Train and evaluate model, and optionally compute model's BLEU score. # 此函数用来训练和验证模型，可选的还有，计算bleu分数
 
-  **Step vs. Epoch vs. Iteration**
+  **Step vs. Epoch vs. Iteration** # 下面一段介绍step epoch iteration的概念和区别
 
   Steps and epochs are canonical terms used in TensorFlow and general machine
   learning. They are used to describe running a single process (train/eval):
@@ -270,21 +270,21 @@ def run_loop(
   This function runs through multiple train+eval+bleu iterations.
 
   Args:
-    estimator: tf.Estimator containing model to train.
-    schedule_manager: A schedule.Manager object to guide the run loop.
-    train_hooks: List of hooks to pass to the estimator during training.
-    benchmark_logger: a BenchmarkLogger object that logs evaluation data
-    bleu_source: File containing text to be translated for BLEU calculation.
-    bleu_ref: File containing reference translations for BLEU calculation.
-    bleu_threshold: minimum BLEU score before training is stopped.
-    vocab_file: Path to vocab file that will be used to subtokenize bleu_source.
+    estimator: tf.Estimator containing model to train. # 估计器中包含模型结构
+    schedule_manager: A schedule.Manager object to guide the run loop. # 控制训练进程的
+    train_hooks: List of hooks to pass to the estimator during training. # 不懂
+    benchmark_logger: a BenchmarkLogger object that logs evaluation data # 专门用来打benchmark的日志的
+    bleu_source: File containing text to be translated for BLEU calculation. # 计算bleu 分用到的待翻译文件
+    bleu_ref: File containing reference translations for BLEU calculation. # 计算bleu 分用到的标准答案文件
+    bleu_threshold: minimum BLEU score before training is stopped. # 在训练结束前所需要达到的bleu分数
+    vocab_file: Path to vocab file that will be used to subtokenize bleu_source. # 指定的词表文件仅仅用于计算bleu分数？？不用于训练？？？
 
   Raises:
     ValueError: if both or none of single_iteration_train_steps and
       single_iteration_train_epochs were defined.
     NotFoundError: if the vocab file or bleu files don't exist.
   """
-  if bleu_source:
+  if bleu_source: # 如果指定了用于计算bleu的文件，则需要检查文件是否存在
     _validate_file(bleu_source)
   if bleu_ref:
     _validate_file(bleu_ref)
@@ -292,12 +292,12 @@ def run_loop(
     _validate_file(vocab_file)
 
   evaluate_bleu = bleu_source is not None and bleu_ref is not None
-  if evaluate_bleu and schedule_manager.use_tpu:
+  if evaluate_bleu and schedule_manager.use_tpu: # 如果用TPU就不能计算bleu了
     raise ValueError("BLEU score can not be computed when training with a TPU, "
                      "as it requires estimator.predict which is not yet "
                      "supported.")
 
-  # Print details of training schedule.
+  # Print details of training schedule. # 打印一下训练控制进度所用到的信息，例如是按照bleu分数来指定结束，还是按照指定的steps数量来结束
   tf.logging.info("Training schedule:")
   tf.logging.info(
       "\t1. Train for {}".format(schedule_manager.train_increment_str))
@@ -311,7 +311,7 @@ def run_loop(
     tf.logging.info("Repeat above steps %d times." %
                     schedule_manager.train_eval_iterations)
 
-  if evaluate_bleu:
+  if evaluate_bleu: # 用来打印bleu分日志的
     # Create summary writer to log bleu score (values can be displayed in
     # Tensorboard).
     bleu_writer = tf.summary.FileWriter(
@@ -321,21 +321,21 @@ def run_loop(
       schedule_manager.train_eval_iterations = INF
 
   # Loop training/evaluation/bleu cycles
-  for i in xrange(schedule_manager.train_eval_iterations):
+  for i in xrange(schedule_manager.train_eval_iterations): # 这个循环控制迭代
     tf.logging.info("Starting iteration %d" % (i + 1))
 
     # Train the model for single_iteration_train_steps or until the input fn
     # runs out of examples (if single_iteration_train_steps is None).
-    estimator.train(
-        dataset.train_input_fn,
+    estimator.train( # 训练一个迭代周期
+        dataset.train_input_fn, # dataset什么时候加载的数据
         steps=schedule_manager.single_iteration_train_steps,
         hooks=train_hooks)
 
-    eval_results = estimator.evaluate(
+    eval_results = estimator.evaluate(  # 验证一次
         input_fn=dataset.eval_input_fn,
         steps=schedule_manager.single_iteration_eval_steps)
 
-    tf.logging.info("Evaluation results (iter %d/%d):" %
+    tf.logging.info("Evaluation results (iter %d/%d):" % # 打印验证结果
                     (i + 1, schedule_manager.train_eval_iterations))
     tf.logging.info(eval_results)
     benchmark_logger.log_evaluation_result(eval_results)
@@ -345,7 +345,7 @@ def run_loop(
     # bleu score must be computed using the estimator.predict() path, which
     # outputs translations that are not based on golden values. The translations
     # are compared to reference file to get the actual bleu score.
-    if evaluate_bleu:
+    if evaluate_bleu: # 以下是关于bleu的东西
       uncased_score, cased_score = evaluate_and_log_bleu(
           estimator, bleu_source, bleu_ref, vocab_file)
 
@@ -482,7 +482,7 @@ def define_transformer_flags():
   flags_core.require_cloud_storage(["data_dir", "model_dir", "export_dir"])
 
 
-def construct_estimator(flags_obj, params, schedule_manager):
+def construct_estimator(flags_obj, params, schedule_manager): # 返回一个tf.estimator.Estimator，用来训练和验证模型
   """Construct an estimator from either Estimator or TPUEstimator.
 
   Args:
@@ -496,7 +496,7 @@ def construct_estimator(flags_obj, params, schedule_manager):
   if not params["use_tpu"]:
     distribution_strategy = distribution_utils.get_distribution_strategy(
         flags_core.get_num_gpus(flags_obj), flags_obj.all_reduce_alg)
-    return tf.estimator.Estimator(
+    return tf.estimator.Estimator( # 官方文档中说明：Estimator class to train and evaluate TensorFlow models.
         model_fn=model_fn, model_dir=flags_obj.model_dir, params=params,
         config=tf.estimator.RunConfig(train_distribute=distribution_strategy))
 
@@ -537,7 +537,7 @@ def run_transformer(flags_obj):
   num_gpus = flags_core.get_num_gpus(flags_obj)
 
   # Add flag-defined parameters to params object
-  params = PARAMS_MAP[flags_obj.param_set]
+  params = PARAMS_MAP[flags_obj.param_set] # 设置网络规模的种类，基础版还是高级版
   if num_gpus > 1:
     if flags_obj.param_set == "big":
       params = model_params.BIG_MULTI_GPU_PARAMS
@@ -553,7 +553,7 @@ def run_transformer(flags_obj):
   params["static_batch"] = flags_obj.static_batch or params["use_tpu"]
   params["allow_ffn_pad"] = not params["use_tpu"]
 
-  params["use_synthetic_data"] = flags_obj.use_synthetic_data
+  params["use_synthetic_data"] = flags_obj.use_synthetic_data # 什么叫使用合成数据？
 
   # Set batch size parameter, which depends on the availability of
   # TPU and GPU, and distribution settings.
@@ -565,7 +565,7 @@ def run_transformer(flags_obj):
     params["batch_size"] = distribution_utils.per_device_batch_size(
         params["batch_size"], num_gpus)
 
-  schedule_manager = schedule.Manager(
+  schedule_manager = schedule.Manager( # 用来管理训练进度的实例，例如steps，验证间隔步数等
       train_steps=flags_obj.train_steps,
       steps_between_evals=flags_obj.steps_between_evals,
       train_epochs=flags_obj.train_epochs,
@@ -579,17 +579,17 @@ def run_transformer(flags_obj):
 
   params["repeat_dataset"] = schedule_manager.repeat_dataset
 
-  model_helpers.apply_clean(flags.FLAGS)
+  model_helpers.apply_clean(flags.FLAGS) # 清理一下数据和之前保存的模型，但是需要在参数中指定允许清理
 
   # Create hooks that log information about the training and metric values
-  train_hooks = hooks_helper.get_train_hooks(
+  train_hooks = hooks_helper.get_train_hooks( # 好像是输出日志的时候需要这个实例
       flags_obj.hooks,
       model_dir=flags_obj.model_dir,
       tensors_to_log=TENSORS_TO_LOG,  # used for logging hooks
       batch_size=schedule_manager.batch_size,  # for ExamplesPerSecondHook
       use_tpu=params["use_tpu"]  # Not all hooks can run with TPUs
   )
-  benchmark_logger = logger.get_benchmark_logger()
+  benchmark_logger = logger.get_benchmark_logger() # 还是用来输出日志的
   benchmark_logger.log_run_info(
       model_name="transformer",
       dataset_name="wmt_translate_ende",
@@ -597,18 +597,18 @@ def run_transformer(flags_obj):
       test_id=flags_obj.benchmark_test_id)
 
   # Train and evaluate transformer model
-  estimator = construct_estimator(flags_obj, params, schedule_manager)
+  estimator = construct_estimator(flags_obj, params, schedule_manager) # 返回一个tf.estimator.Estimator用来训练和验证模型
   run_loop(
-      estimator=estimator,
+      estimator=estimator, # “估计器”，用来帮助训练和验证模型
       # Training arguments
-      schedule_manager=schedule_manager,
-      train_hooks=train_hooks,
-      benchmark_logger=benchmark_logger,
+      schedule_manager=schedule_manager, # 用来管理训练过程的，训练多少steps，多久验证一次等
+      train_hooks=train_hooks, # 打日志的？
+      benchmark_logger=benchmark_logger, # 打日志的？
       # BLEU calculation arguments
-      bleu_source=flags_obj.bleu_source,
+      bleu_source=flags_obj.bleu_source, # 3个关于bleu的文件
       bleu_ref=flags_obj.bleu_ref,
       bleu_threshold=flags_obj.stop_threshold,
-      vocab_file=flags_obj.vocab_file)
+      vocab_file=flags_obj.vocab_file) # 词表文件
 
   if flags_obj.export_dir:
     serving_input_fn = export.build_tensor_serving_input_receiver_fn(

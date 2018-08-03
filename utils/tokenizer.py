@@ -69,7 +69,7 @@ class Subtokenizer(object):
       reserved_tokens = RESERVED_TOKENS
 
     self.subtoken_list = _load_vocab_file(vocab_file, reserved_tokens) # 从词表文件读取
-    self.alphabet = _generate_alphabet_dict(self.subtoken_list) # 将保留token纳入，另外将所有字符纳入
+    self.alphabet = _generate_alphabet_dict(self.subtoken_list) # 获取字符表，还不知道对中文的处理结果
     self.subtoken_to_id_dict = _list_to_index_dict(self.subtoken_list) # 转成字典，item：n
 
     self.max_subtoken_length = 0 # 统计一下最长的token
@@ -77,8 +77,8 @@ class Subtokenizer(object):
       self.max_subtoken_length = max(self.max_subtoken_length, len(subtoken))
 
     # Create cache to speed up subtokenization
-    self._cache_size = 2 ** 20
-    self._cache = [(None, None)] * self._cache_size
+    self._cache_size = 2 ** 20 # 弄了一个哈希表来存储token, 大小就是这么大
+    self._cache = [(None, None)] * self._cache_size # 这个哈希表是一个列表，索引是下标，内容是token和它对应的subtokenid序列
 
   @staticmethod
   def init_from_files(
@@ -120,10 +120,10 @@ class Subtokenizer(object):
       _save_vocab_file(vocab_file, subtoken_list) # 存到词表文件
     return Subtokenizer(vocab_file)
 
-  def encode(self, raw_string, add_eos=False):
+  def encode(self, raw_string, add_eos=False): # 将字符串变为一系列subtoken id
     """Encodes a string into a list of int subtoken ids."""
     ret = []
-    tokens = _split_string_to_tokens(_native_to_unicode(raw_string))
+    tokens = _split_string_to_tokens(_native_to_unicode(raw_string)) # 将字符串转unicode，然后切分成token
     for token in tokens:
       ret.extend(self._token_to_subtoken_ids(token))
     if add_eos:
@@ -132,7 +132,7 @@ class Subtokenizer(object):
 
   def _token_to_subtoken_ids(self, token):
     """Encode a single token into a list of subtoken ids."""
-    cache_location = hash(token) % self._cache_size
+    cache_location = hash(token) % self._cache_size # 先看这个token在不在，如果在直接取出返回
     cache_key, cache_value = self._cache[cache_location]
     if cache_key == token:
       return cache_value
@@ -200,7 +200,7 @@ def _load_vocab_file(vocab_file, reserved_tokens=None):
   return reserved_tokens + subtoken_list
 
 
-def _native_to_unicode(s):
+def _native_to_unicode(s): # 将字符串转为unicode
   """Convert string to unicode (required in Python 2)."""
   try:               # Python 2
     return s if isinstance(s, unicode) else s.decode("utf-8")
@@ -223,7 +223,7 @@ def _split_string_to_tokens(text):
   ret = []
   token_start = 0
   # Classify each character in the input string
-  is_alnum = [c in _ALPHANUMERIC_CHAR_SET for c in text]
+  is_alnum = [c in _ALPHANUMERIC_CHAR_SET for c in text] # 生成一个列表，元素为bool，表示该字符是否在
   for pos in xrange(1, len(text)):
     if is_alnum[pos] != is_alnum[pos - 1]:
       token = text[token_start:pos]
@@ -246,7 +246,7 @@ def _join_tokens_to_string(tokens):
   return "".join(ret)
 
 
-def _escape_token(token, alphabet):
+def _escape_token(token, alphabet): # 替换不在字母表中的字符，并在token后面填_表示结束
   r"""Replace characters that aren't in the alphabet and append "_" to token.
 
   Apply three transformations to the token:
@@ -430,7 +430,7 @@ def _generate_subtokens_with_target_vocab_size(
   return bisect(_MIN_MIN_COUNT, _MAX_MIN_COUNT)
 
 
-def _generate_alphabet_dict(iterable, reserved_tokens=None): # 这一步将字符也纳入到词表里面
+def _generate_alphabet_dict(iterable, reserved_tokens=None): # 这一步仅仅是获得一个字符表，还不知道对中文怎么处理，是否是按照字切分
   """Create set of characters that appear in any element in the iterable."""
   if reserved_tokens is None:
     reserved_tokens = RESERVED_TOKENS
@@ -456,10 +456,10 @@ def _count_and_gen_subtokens(
     A defaultdict mapping subtokens to the number of times they appear in the
     tokens. The dict may contain new subtokens.
   """
-  subtoken_counts = collections.defaultdict(int)
-  for token, count in six.iteritems(token_counts):
-    token = _escape_token(token, alphabet)
-    subtokens = _split_token_to_subtokens(
+  subtoken_counts = collections.defaultdict(int) # 空字典
+  for token, count in six.iteritems(token_counts): # 对于所有原始的token
+    token = _escape_token(token, alphabet) # 替换不在字母表中的字符，并在token后面填 "_" 表示结束
+    subtokens = _split_token_to_subtokens( 
         token, subtoken_dict, max_subtoken_length)
 
     # Generate new subtokens by taking substrings from token.
@@ -596,7 +596,7 @@ def _generate_subtokens(
   for i in xrange(num_iterations):
     tf.logging.info("\tGenerating subtokens: iteration %d" % i)
     # Generate new subtoken->id dictionary using the new subtoken list.
-    subtoken_dict = _list_to_index_dict(subtoken_list) # 用subtoken_list生成一个字典，item：n
+    subtoken_dict = _list_to_index_dict(subtoken_list) # 用subtoken_list生成一个字典，item：n，此时，里面仅仅是字符
 
     # Create dict mapping subtoken->count, with additional subtokens created
     # from substrings taken from the tokens.

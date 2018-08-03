@@ -33,14 +33,14 @@ class EmbeddingSharedWeights(tf.layers.Layer):
     Args:
       vocab_size: Number of tokens in the embedding. (Typically ~32,000)
       hidden_size: Dimensionality of the embedding. (Typically 512 or 1024)
-      method: Strategy for performing embedding lookup. "gather" uses tf.gather
+      method: Strategy for performing embedding lookup. "gather" uses tf.gather # 不太清楚gather和matmul的区别
         which performs well on CPUs and GPUs, but very poorly on TPUs. "matmul"
         one-hot encodes the indicies and formulates the embedding as a sparse
         matrix multiplication. The matmul formulation is wasteful as it does
         extra work, however matrix multiplication is very fast on TPUs which
         makes "matmul" considerably faster than "gather" on TPUs.
     """
-    super(EmbeddingSharedWeights, self).__init__()
+    super(EmbeddingSharedWeights, self).__init__() # 这是干啥
     self.vocab_size = vocab_size
     self.hidden_size = hidden_size
     if method not in ("gather", "matmul"):
