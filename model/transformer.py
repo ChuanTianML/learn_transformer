@@ -64,6 +64,7 @@ class Transformer(object):
 
   def __call__(self, inputs, targets=None):
     """Calculate target logits or inferred target sequences.
+    # init负责构造这些层，call负责
 
     Args:
       inputs: int tensor with shape [batch_size, input_length].
@@ -84,17 +85,17 @@ class Transformer(object):
     with tf.variable_scope("Transformer", initializer=initializer):
       # Calculate attention bias for encoder self-attention and decoder
       # multi-headed attention layers.
-      attention_bias = model_utils.get_padding_bias(inputs)
+      attention_bias = model_utils.get_padding_bias(inputs) # 计算一个attention偏差
 
       # Run the inputs through the encoder layer to map the symbol
       # representations to continuous representations.
-      encoder_outputs = self.encode(inputs, attention_bias)
+      encoder_outputs = self.encode(inputs, attention_bias) # 将输入进行encode
 
       # Generate output sequence if targets is None, or return logits if target
       # sequence is known.
-      if targets is None:
+      if targets is None: # 没给目标句子，那就是要做预测了
         return self.predict(encoder_outputs, attention_bias)
-      else:
+      else: # 给了目标句子，那就是要训练或者验证了
         logits = self.decode(targets, encoder_outputs, attention_bias)
         return logits
 
@@ -111,20 +112,20 @@ class Transformer(object):
     with tf.name_scope("encode"):
       # Prepare inputs to the layer stack by adding positional encodings and
       # applying dropout.
-      embedded_inputs = self.embedding_softmax_layer(inputs)
-      inputs_padding = model_utils.get_padding(inputs)
+      embedded_inputs = self.embedding_softmax_layer(inputs) # 将inputs做embedding
+      inputs_padding = model_utils.get_padding(inputs) # 用来划齐长度，还没划齐，只是获得了padding
 
-      with tf.name_scope("add_pos_encoding"):
+      with tf.name_scope("add_pos_encoding"): # 给embedded_inputs添加pos_encoding
         length = tf.shape(embedded_inputs)[1]
         pos_encoding = model_utils.get_position_encoding(
             length, self.params["hidden_size"])
         encoder_inputs = embedded_inputs + pos_encoding
 
-      if self.train:
+      if self.train: # 如果是训练模式，则需要加上dropout
         encoder_inputs = tf.nn.dropout(
             encoder_inputs, 1 - self.params["layer_postprocess_dropout"])
 
-      return self.encoder_stack(encoder_inputs, attention_bias, inputs_padding)
+      return self.encoder_stack(encoder_inputs, attention_bias, inputs_padding) # 将经过encoder的结果返回
 
   def decode(self, targets, encoder_outputs, attention_bias):
     """Generate logits for each value in the target sequence.
@@ -243,7 +244,7 @@ class Transformer(object):
     return {"outputs": top_decoded_ids, "scores": top_scores}
 
 
-class LayerNormalization(tf.layers.Layer):
+class LayerNormalization(tf.layers.Layer): # 对传进来的层进行normalization
   """Applies layer normalization."""
 
   def __init__(self, hidden_size):
@@ -266,6 +267,9 @@ class LayerNormalization(tf.layers.Layer):
 
 class PrePostProcessingWrapper(object):
   """Wrapper class that applies layer pre-processing and post-processing."""
+  # 每层的预处理和后处理？
+  # 预处理：layer normalization
+  # 后处理：dropout
 
   def __init__(self, layer, params, train):
     self.layer = layer
@@ -299,25 +303,26 @@ class EncoderStack(tf.layers.Layer):
 
   def __init__(self, params, train):
     super(EncoderStack, self).__init__() # 这是干啥
-    self.layers = []
-    for _ in range(params["num_hidden_layers"]): # 循环建立N个独立层
+    self.layers = [] # 用列表来储存这些层，每个元素是一个二元元组
+    for _ in range(params["num_hidden_layers"]): # 循环建立N个独立层,这个参数被设置为6
       # Create sublayers for each layer.
-      self_attention_layer = attention_layer.SelfAttention(
+      self_attention_layer = attention_layer.SelfAttention( # SelfAttention 层
           params["hidden_size"], params["num_heads"],
           params["attention_dropout"], train)
-      feed_forward_network = ffn_layer.FeedFowardNetwork(
+      feed_forward_network = ffn_layer.FeedFowardNetwork( # 前向传播层
           params["hidden_size"], params["filter_size"],
           params["relu_dropout"], train, params["allow_ffn_pad"])
 
       self.layers.append([
-          PrePostProcessingWrapper(self_attention_layer, params, train),
+          PrePostProcessingWrapper(self_attention_layer, params, train), # 所有的层都要经过layer normalizaiton和dropout
           PrePostProcessingWrapper(feed_forward_network, params, train)])
 
     # Create final layer normalization layer.
-    self.output_normalization = LayerNormalization(params["hidden_size"])
+    self.output_normalization = LayerNormalization(params["hidden_size"]) # 怎么起作用的
 
   def call(self, encoder_inputs, attention_bias, inputs_padding):
-    """Return the output of the encoder layer stacks.
+    """Return the output of the encoder layer stacks. # 返回encoder的输出
+    # init函数的作用是构造这些层，call函数的作用是将这些层首尾连起来
 
     Args:
       encoder_inputs: tensor with shape [batch_size, input_length, hidden_size]
@@ -358,18 +363,18 @@ class DecoderStack(tf.layers.Layer):
     super(DecoderStack, self).__init__()
     self.layers = []
     for _ in range(params["num_hidden_layers"]):
-      self_attention_layer = attention_layer.SelfAttention(
+      self_attention_layer = attention_layer.SelfAttention( # SelfAttention
           params["hidden_size"], params["num_heads"],
           params["attention_dropout"], train)
-      enc_dec_attention_layer = attention_layer.Attention(
+      enc_dec_attention_layer = attention_layer.Attention( # Attention
           params["hidden_size"], params["num_heads"],
           params["attention_dropout"], train)
-      feed_forward_network = ffn_layer.FeedFowardNetwork(
+      feed_forward_network = ffn_layer.FeedFowardNetwork( # 前向传播层
           params["hidden_size"], params["filter_size"],
           params["relu_dropout"], train, params["allow_ffn_pad"])
 
       self.layers.append([
-          PrePostProcessingWrapper(self_attention_layer, params, train),
+          PrePostProcessingWrapper(self_attention_layer, params, train), # 每一层都做一下normalization和dropout
           PrePostProcessingWrapper(enc_dec_attention_layer, params, train),
           PrePostProcessingWrapper(feed_forward_network, params, train)])
 
@@ -378,6 +383,7 @@ class DecoderStack(tf.layers.Layer):
   def call(self, decoder_inputs, encoder_outputs, decoder_self_attention_bias,
            attention_bias, cache=None):
     """Return the output of the decoder layer stacks.
+    # 同理于encoder，init负责构造这些层，call负责将这些层首尾相连，返回输出
 
     Args:
       decoder_inputs: tensor with shape [batch_size, target_length, hidden_size]
