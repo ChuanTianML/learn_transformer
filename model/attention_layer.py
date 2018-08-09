@@ -70,6 +70,7 @@ class Attention(tf.layers.Layer):
 
   def combine_heads(self, x):
     """Combine tensor that has been split.
+    # 将多个头拼接起来变成一个头
 
     Args:
       x: A tensor [batch_size, num_heads, length, hidden_size/num_heads]
@@ -103,7 +104,7 @@ class Attention(tf.layers.Layer):
     # learned projections. This is in preparation of splitting them into
     # multiple heads. Multi-head attention uses multiple queries, keys, and
     # values rather than regular attention (which uses a single q, k, v).
-    q = self.q_dense_layer(x) # x作为query，先来个线性映射
+    q = self.q_dense_layer(x) # x作为query，先来个线性映射，映射层就是 hidden_size * hidden_size 吧
     k = self.k_dense_layer(y) # y作为key，也来个线性映射
     v = self.v_dense_layer(y) # y作为value，再来个线性映射
 
@@ -122,27 +123,34 @@ class Attention(tf.layers.Layer):
     v = self.split_heads(v)
 
     # Scale q to prevent the dot product between q and k from growing too large.
-    depth = (self.hidden_size // self.num_heads)
-    q *= depth ** -0.5
+    depth = (self.hidden_size // self.num_heads) 
+    q *= depth ** -0.5 # 传说中的scale
 
     # Calculate dot product attention
-    logits = tf.matmul(q, k, transpose_b=True)
-    logits += bias
-    weights = tf.nn.softmax(logits, name="attention_weights")
-    if self.train:
+    # 分页矩阵运算，batch_size和num_heads都是页的维度，也就是按照每个[length, depth]去思考计算过程即可
+    # 这样: q的形状[length, depth], 表示有length个query
+    #       k,v的形状均为[length, depth], 表示有个length个键值对,每个key和value均是一个向量，长度为depth
+    # 对于每个query，都会通过跟所有的key內积，获得权重分布，然后每个value乘以对应的key，再累加，获得经过attention后的value
+    logits = tf.matmul(q, k, transpose_b=True) # 得到的形状是[batch_size, self.num_heads, length, length]，此时的第一个length对应query的数量，第二个length对应(k,v)对的数量
+    logits += bias # 对于selfattention, bias 的形状是 [batch_size, 1, 1, input_length], 懂了，在softmax之前将每个句子padding的部分的权重设为负无穷大，也就是表示不参与attention的计算
+    weights = tf.nn.softmax(logits, name="attention_weights") # 在最后一个维度，即length，即（k,v）对数量上，进行softmax，获得每个(k,v)对的权重
+    if self.train: # 训练模式下，还要给attention进行dropout
       weights = tf.nn.dropout(weights, 1.0 - self.attention_dropout)
-    attention_output = tf.matmul(weights, v)
+    attention_output = tf.matmul(weights, v) # 最终，将attention作用于所有的value，获得的形状为[batch_size, self.num_heads, length, depth]
 
     # Recombine heads --> [batch_size, length, hidden_size]
+    # 形状从[batch_size, self.num_heads, length, depth] 变回 [batch_size, length, hidden_size]
     attention_output = self.combine_heads(attention_output)
 
     # Run the combined outputs through another linear projection layer.
-    attention_output = self.output_dense_layer(attention_output)
+    attention_output = self.output_dense_layer(attention_output) # 最后还有一个线性映射层
     return attention_output
 
 
 class SelfAttention(Attention):
   """Multiheaded self-attention layer."""
 
+  # 对于SelfAttention来说，x为[batch_size, input_length, hidden_size]形状
+  #     bias为[batch_size, 1, 1, input_length]形状
   def call(self, x, bias, cache=None):
     return super(SelfAttention, self).call(x, x, bias, cache)

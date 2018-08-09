@@ -53,13 +53,13 @@ class Transformer(object):
       train: boolean indicating whether the model is in training mode. Used to
         determine if dropout layers should be added.
     """
-    self.train = train # 这个train是啥玩意儿，是函数吗
+    self.train = train # 这个train是一个标志，指示是什么模式
     self.params = params
 
     self.embedding_softmax_layer = embedding_layer.EmbeddingSharedWeights( # 不知道干了啥
         params["vocab_size"], params["hidden_size"],
         method="matmul" if params["tpu"] else "gather")
-    self.encoder_stack = EncoderStack(params, train) 
+    self.encoder_stack = EncoderStack(params, train)
     self.decoder_stack = DecoderStack(params, train)
 
   def __call__(self, inputs, targets=None):
@@ -80,12 +80,13 @@ class Transformer(object):
     """
     # Variance scaling is used here because it seems to work in many problems.
     # Other reasonable initializers may also work just as well.
-    initializer = tf.variance_scaling_initializer(
+    initializer = tf.variance_scaling_initializer( # 初始化器，给了scope，即可实现初始化
         self.params["initializer_gain"], mode="fan_avg", distribution="uniform")
     with tf.variable_scope("Transformer", initializer=initializer):
       # Calculate attention bias for encoder self-attention and decoder
       # multi-headed attention layers.
-      attention_bias = model_utils.get_padding_bias(inputs) # 计算一个attention偏差
+      attention_bias = model_utils.get_padding_bias(inputs) # 获得attention偏差矩阵，
+      # 这个矩阵，不是padding的部分，都是0，是padding的部分，都是负无穷，而且插了两个维度，貌似是给 num_heads 和 length 准备的
 
       # Run the inputs through the encoder layer to map the symbol
       # representations to continuous representations.
@@ -105,6 +106,7 @@ class Transformer(object):
     Args:
       inputs: int tensor with shape [batch_size, input_length].
       attention_bias: float tensor with shape [batch_size, 1, 1, input_length]
+      # 这个矩阵，不是padding的部分，都是0，是padding的部分，都是负无穷，
 
     Returns:
       float tensor with shape [batch_size, input_length, hidden_size]
@@ -113,9 +115,11 @@ class Transformer(object):
       # Prepare inputs to the layer stack by adding positional encodings and
       # applying dropout.
       embedded_inputs = self.embedding_softmax_layer(inputs) # 将inputs做embedding
-      inputs_padding = model_utils.get_padding(inputs) # 用来划齐长度，还没划齐，只是获得了padding
 
-      with tf.name_scope("add_pos_encoding"): # 给embedded_inputs添加pos_encoding
+      # 获得padding information tensor，凡是padding部分是1，非padding部分是0，形状与inputs一样
+      inputs_padding = model_utils.get_padding(inputs)
+
+      with tf.name_scope("add_pos_encoding"): # 给embedded_inputs添加pos_encoding，即添加时序信息
         length = tf.shape(embedded_inputs)[1]
         pos_encoding = model_utils.get_position_encoding(
             length, self.params["hidden_size"])
@@ -125,6 +129,9 @@ class Transformer(object):
         encoder_inputs = tf.nn.dropout(
             encoder_inputs, 1 - self.params["layer_postprocess_dropout"])
 
+      # encoder_inputs 的 shape 应该是: [batch_size, input_length, hidden_size]
+      # attention_bias 应该是: [batch_size, 1, 1, input_length]
+      # inputs_padding 应该是: [batch_size, input_length]
       return self.encoder_stack(encoder_inputs, attention_bias, inputs_padding) # 将经过encoder的结果返回
 
   def decode(self, targets, encoder_outputs, attention_bias):
@@ -143,42 +150,47 @@ class Transformer(object):
     with tf.name_scope("decode"):
       # Prepare inputs to decoder layers by shifting targets, adding positional
       # encoding and applying dropout.
-      decoder_inputs = self.embedding_softmax_layer(targets)
+      decoder_inputs = self.embedding_softmax_layer(targets) # 将targets做embedding获得decoder的输入
       with tf.name_scope("shift_targets"):
         # Shift targets to the right, and remove the last element
-        decoder_inputs = tf.pad(
+        decoder_inputs = tf.pad( # 向右平移
             decoder_inputs, [[0, 0], [1, 0], [0, 0]])[:, :-1, :]
-      with tf.name_scope("add_pos_encoding"):
+      with tf.name_scope("add_pos_encoding"): # 添加位置encoding
         length = tf.shape(decoder_inputs)[1]
         decoder_inputs += model_utils.get_position_encoding(
             length, self.params["hidden_size"])
-      if self.train:
+      if self.train: # 如果是训练模式，加上dropout
         decoder_inputs = tf.nn.dropout(
             decoder_inputs, 1 - self.params["layer_postprocess_dropout"])
 
       # Run values
       decoder_self_attention_bias = model_utils.get_decoder_self_attention_bias(
           length)
-      outputs = self.decoder_stack(
+      outputs = self.decoder_stack( # 进行decode
           decoder_inputs, encoder_outputs, decoder_self_attention_bias,
           attention_bias)
-      logits = self.embedding_softmax_layer.linear(outputs)
+      logits = self.embedding_softmax_layer.linear(outputs) # 做softmax
       return logits
 
   def _get_symbols_to_logits_fn(self, max_decode_length):
     """Returns a decoding function that calculates logits of the next tokens."""
+    # 返回一个能够计算下一个token的decode函数
 
-    timing_signal = model_utils.get_position_encoding(
+    timing_signal = model_utils.get_position_encoding( # 时序信息，形状是[length, hidden_size]
         max_decode_length + 1, self.params["hidden_size"])
-    decoder_self_attention_bias = model_utils.get_decoder_self_attention_bias(
-        max_decode_length)
+    decoder_self_attention_bias = model_utils.get_decoder_self_attention_bias( 
+        max_decode_length) # self attention 的偏差, 形状是[1, 1, length, length]
 
     def symbols_to_logits_fn(ids, i, cache):
       """Generate logits for next potential IDs.
+      这个函数可以做到，给出已经预测的tokens的id，使用decoder和encode的信息，预测下一个token
+      ids表示已经预测出来的tokens
+      i表示当前是第i个位置，要被预测
+      cache应该是因为：训练时的decode只需要做一次，但是inference时的decode需要做多次，因为要逐个单词预测，多次decode用的encode信息是一样的，因此需要提前存储好。
 
       Args:
         ids: Current decoded sequences.
-          int tensor with shape [batch_size * beam_size, i + 1]
+          int tensor with shape [batch_size * beam_size, i + 1]，忽略batch_size，可以看出，这个ids不是整个句子的ids，而是从开始到某一位置的候选tokens的id
         i: Loop index
         cache: dictionary of values storing the encoder output, encoder-decoder
           attention bias, and previous decoder attention values.
@@ -189,18 +201,21 @@ class Transformer(object):
            updated cache values)
       """
       # Set decoder input to the last generated IDs
-      decoder_input = ids[:, -1:]
+      decoder_input = ids[:, -1:] # 貌似是想要获得句子中当前位置的候选tokens的ids，也就是获得形状 [batch_size * beam_size, 1]
 
       # Preprocess decoder input by getting embeddings and adding timing signal.
-      decoder_input = self.embedding_softmax_layer(decoder_input)
-      decoder_input += timing_signal[i:i + 1]
+      # 做embedding，也就是[batch_size * beam_size, 1, hidden_size]
+      # 从这一步可以看出，在inference的decode的输入，就是用已经预测的tokens的最后一个token，构成句子长度为1的句子，做embedding，输入到decode进行解码
+      decoder_input = self.embedding_softmax_layer(decoder_input) 
+      decoder_input += timing_signal[i:i + 1] # 加上第i个token的时序信息
 
-      self_attention_bias = decoder_self_attention_bias[:, :, i:i + 1, :i + 1]
-      decoder_outputs = self.decoder_stack(
+      self_attention_bias = decoder_self_attention_bias[:, :, i:i + 1, :i + 1] # self attention，形状是[1, 1, 1, i+1]
+      decoder_outputs = self.decoder_stack( # 进行decode，输出tensor的形状和输入decoder_input一样，也是[batch_size * beam_size, 1, hidden_size]
           decoder_input, cache.get("encoder_outputs"), self_attention_bias,
           cache.get("encoder_decoder_attention_bias"), cache)
-      logits = self.embedding_softmax_layer.linear(decoder_outputs)
-      logits = tf.squeeze(logits, axis=[1])
+      # softmax，从[batch_size * beam_size, 1, hidden_size]映射到[batch_size * beam_size, 1, vocab_size]
+      logits = self.embedding_softmax_layer.linear(decoder_outputs) 
+      logits = tf.squeeze(logits, axis=[1]) # 去掉中间那个长度为1的维度，即由[batch_size * beam_size, 1, vocab_size]变为[batch_size * beam_size, vocab_size]
       return logits, cache
     return symbols_to_logits_fn
 
@@ -208,14 +223,17 @@ class Transformer(object):
     """Return predicted sequence."""
     batch_size = tf.shape(encoder_outputs)[0]
     input_length = tf.shape(encoder_outputs)[1]
-    max_decode_length = input_length + self.params["extra_decode_length"]
+    max_decode_length = input_length + self.params["extra_decode_length"] # 最大decode长度
 
-    symbols_to_logits_fn = self._get_symbols_to_logits_fn(max_decode_length)
+    symbols_to_logits_fn = self._get_symbols_to_logits_fn(max_decode_length) # 返回一个能够计算下一个token的decode函数
 
     # Create initial set of IDs that will be passed into symbols_to_logits_fn.
-    initial_ids = tf.zeros([batch_size], dtype=tf.int32)
+    # 要传到symbols_to_logits_fn里面的初始id
+    # 预测第一个词用的
+    initial_ids = tf.zeros([batch_size], dtype=tf.int32) 
 
     # Create cache storing decoder attention values for each layer.
+    # 这个缓存是干嘛的呀呀呀，说是用来存储每层（big:共6层）decoder的attention
     cache = {
         "layer_%d" % layer: {
             "k": tf.zeros([batch_size, 0, self.params["hidden_size"]]),
@@ -227,7 +245,7 @@ class Transformer(object):
     cache["encoder_decoder_attention_bias"] = encoder_decoder_attention_bias
 
     # Use beam search to find the top beam_size sequences and scores.
-    decoded_ids, scores = beam_search.sequence_beam_search(
+    decoded_ids, scores = beam_search.sequence_beam_search( # 用beamsearch获得前beam_size个最佳结果
         symbols_to_logits_fn=symbols_to_logits_fn,
         initial_ids=initial_ids,
         initial_cache=cache,
@@ -238,7 +256,7 @@ class Transformer(object):
         eos_id=EOS_ID)
 
     # Get the top sequence for each batch element
-    top_decoded_ids = decoded_ids[:, 0, 1:]
+    top_decoded_ids = decoded_ids[:, 0, 1:] # 返回最好的一个结果
     top_scores = scores[:, 0]
 
     return {"outputs": top_decoded_ids, "scores": top_scores}
@@ -280,6 +298,9 @@ class PrePostProcessingWrapper(object):
     self.layer_norm = LayerNormalization(params["hidden_size"])
 
   def __call__(self, x, *args, **kwargs):
+    # 由于这个类被用来处理不同的层，如self_attention层或者前向传播层，
+    # 因此除了输入x指定外，其他的参数都不指定，即用*args, **kwargs来传递参数
+
     # Preprocessing: apply layer normalization
     y = self.layer_norm(x)
 
@@ -323,6 +344,10 @@ class EncoderStack(tf.layers.Layer):
   def call(self, encoder_inputs, attention_bias, inputs_padding):
     """Return the output of the encoder layer stacks. # 返回encoder的输出
     # init函数的作用是构造这些层，call函数的作用是将这些层首尾连起来
+    encoder_inputs: [batch_size, input_length, hidden_size]的形状，原始的inputs --> embedding --> 添加时序信息
+    attention_bias: [batch_size, 1, 1, input_length]的形状，所有padding部分都是负无穷，非padding部分都是0
+    inputs_padding: [batch_size, input_length]的形状，所有padding部分都是1，非padding部分都是0
+    attention_bias 就是由 inputs_padding 计算得到的啊
 
     Args:
       encoder_inputs: tensor with shape [batch_size, input_length, hidden_size]
@@ -334,16 +359,18 @@ class EncoderStack(tf.layers.Layer):
       Output of encoder layer stack.
       float32 tensor with shape [batch_size, input_length, hidden_size]
     """
-    for n, layer in enumerate(self.layers):
+    for n, layer in enumerate(self.layers): # 对于big网络规模，6层网络的关系是上下叠加，首尾相连
       # Run inputs through the sublayers.
-      self_attention_layer = layer[0]
+      self_attention_layer = layer[0] # 获得两个层的结构
       feed_forward_network = layer[1]
 
-      with tf.variable_scope("layer_%d" % n):
+      with tf.variable_scope("layer_%d" % n): # 数据输入两层，获得输出
+        # 先经过self attention层，算了encoder_inputs和它自己的attention，输出的形状没有变，即[batch_size, input_length, hidden_size]
         with tf.variable_scope("self_attention"):
-          encoder_inputs = self_attention_layer(encoder_inputs, attention_bias)
+          encoder_inputs = self_attention_layer(encoder_inputs, attention_bias) 
+        # 再经过前向传播层, 其中包括两个子层，第一个带激活函数，第二个就是线性映射
         with tf.variable_scope("ffn"):
-          encoder_inputs = feed_forward_network(encoder_inputs, inputs_padding)
+          encoder_inputs = feed_forward_network(encoder_inputs, inputs_padding) 
 
     return self.output_normalization(encoder_inputs)
 
@@ -397,12 +424,17 @@ class DecoderStack(tf.layers.Layer):
           {layer_n: {"k": tensor with shape [batch_size, i, key_channels],
                      "v": tensor with shape [batch_size, i, value_channels]},
            ...}
+        这个cache是在inference的时候需要的，在训练的时候不需要，为None
+        因为训练时对于每个样本只需要做一次decode，但是inference时，需要进行多次decode，因为单词是逐个预测的
+        进行多次decode时，所用到的encode信息是一样的，因此需要弄一个缓存，每次从缓存中取出来用
 
     Returns:
       Output of decoder layer stack.
       float32 tensor with shape [batch_size, target_length, hidden_size]
     """
-    for n, layer in enumerate(self.layers):
+    # 对于big网络规模，6层网络的关系是上下叠加，首尾相连
+    # 另外，可以看出，encoder和decoder之间的attention是按照层对应进行的，即第i层encoder和第i层decoder之间建立attention联系
+    for n, layer in enumerate(self.layers): 
       self_attention_layer = layer[0]
       enc_dec_attention_layer = layer[1]
       feed_forward_network = layer[2]
@@ -415,9 +447,9 @@ class DecoderStack(tf.layers.Layer):
           decoder_inputs = self_attention_layer(
               decoder_inputs, decoder_self_attention_bias, cache=layer_cache)
         with tf.variable_scope("encdec_attention"):
-          decoder_inputs = enc_dec_attention_layer(
+          decoder_inputs = enc_dec_attention_layer( # 跟encoder唯一的不同就在于此，多了一个attention层，用decoder的输入作为查询，用encoder的输出作为键和值
               decoder_inputs, encoder_outputs, attention_bias)
         with tf.variable_scope("ffn"):
           decoder_inputs = feed_forward_network(decoder_inputs)
 
-    return self.output_normalization(decoder_inputs)
+    return self.output_normalization(decoder_inputs) # 输出的形状就是输入时decoder_inputs的形状，即[batch_size, target_length, hidden_size]

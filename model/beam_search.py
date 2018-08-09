@@ -71,6 +71,7 @@ class SequenceBeamSearch(object):
 
   def search(self, initial_ids, initial_cache):
     """Beam search for sequences with highest scores."""
+    # 这个函数完成beam search
     state, state_shapes = self._create_initial_state(initial_ids, initial_cache)
 
     finished_state = tf.while_loop(

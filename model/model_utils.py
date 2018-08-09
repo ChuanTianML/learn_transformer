@@ -76,6 +76,12 @@ def get_decoder_self_attention_bias(length):
 
 def get_padding(x, padding_value=0):
   """Return float tensor representing the padding values in x.
+  # x 应该是输入的token id tensor，例如是[batch_size, length]
+  # x 已经经过了padding，补充的部分是用0补充的
+  # 这个函数负责生成一个与x同形状的tensor，
+    凡是补充的部分，都是1，表示这是补充的部分
+    凡是非补充部分，都是0，表示这里不是补充的
+  # 将这个返回的tensor称为 padding information tensor
 
   Args:
     x: int tensor with any shape
@@ -103,8 +109,8 @@ def get_padding_bias(x):
     Attention bias tensor of shape [batch_size, 1, 1, length].
   """
   with tf.name_scope("attention_bias"):
-    padding = get_padding(x)
-    attention_bias = padding * _NEG_INF
-    attention_bias = tf.expand_dims(
+    padding = get_padding(x) # 获得padding information tensor
+    attention_bias = padding * _NEG_INF # 将所有补充的部分乘以负无穷
+    attention_bias = tf.expand_dims( # [batch_size, length] --> [batch_size, 1, 1, length] 即插了两个维度进去，还不知干嘛用
         tf.expand_dims(attention_bias, axis=1), axis=1)
-  return attention_bias
+  return attention_bias # 这个矩阵，不是padding的部分，都是0，是padding的部分，都是负无穷，而且插了两个维度，貌似是给 num_heads 和 length 准备的
